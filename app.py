@@ -2,6 +2,9 @@
 from flask import Flask, jsonify
 from dotenv import load_dotenv
 import os
+import hmac
+import hashlib
+import base64
 from database import init_db, mongo
 import requests
 from zoom_api import get_zoom_access_token
@@ -71,23 +74,45 @@ def create_meeting():
     })
 
 # Webhook endpoint for Zoom events
-@app.route('/webhook', methods=['GET', 'POST'])
+@app.route("/webhook", methods=["POST"])
 def zoom_webhook():
-    # Handle POST events from Zoom
-    if request.method == "POST":
-        data = request.json
-        print("Received Zoom webhook:", data)
+    data = request.get_json(force=True)
+    print("📩 Incoming Zoom Event:", data)
 
-    # Always respond 200 OK for GET or POST
+    # ✅ Handle URL validation (for Server-to-Server OAuth)
+    if data and data.get("event") == "endpoint.url_validation":
+        plain_token = data["payload"]["plainToken"]
+        client_secret = os.getenv("ZOOM_CLIENT_SECRET", "")
+
+        # Compute encrypted token using client secret
+        hash_for_validate = hmac.new(
+            client_secret.encode('utf-8'),
+            plain_token.encode('utf-8'),
+            hashlib.sha256
+        ).digest()
+        encoded_hash = base64.b64encode(hash_for_validate).decode('utf-8')
+
+        print("🔐 URL validation requested by Zoom — sending response")
+        return jsonify({
+            "plainToken": plain_token,
+            "encryptedToken": encoded_hash
+        }), 200
+
+    # ✅ Handle normal Zoom events
+    event_type = data.get("event")
+    if event_type == "meeting.participant_joined":
+        participant = data["payload"]["object"]["participant"]["user_name"]
+        meeting_id = data["payload"]["object"]["id"]
+        print(f"✅ {participant} joined meeting {meeting_id}")
+    elif event_type == "meeting.participant_left":
+        participant = data["payload"]["object"]["participant"]["user_name"]
+        meeting_id = data["payload"]["object"]["id"]
+        print(f"👋 {participant} left meeting {meeting_id}")
+
     return jsonify({"status": "ok"}), 200
 
 
 
-# ✅ Keep this last
 if __name__ == '__main__':
-     # Start Ngrok tunnel
-     #public_url = ngrok.connect(int(os.getenv("PORT", 5000)))
-     #print("Ngrok tunnel URL:", public_url)
-     #print("Webhook endpoint:", f"{public_url}/webhook")
-    
-     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)), debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
