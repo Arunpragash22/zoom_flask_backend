@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 import os
 import hmac
@@ -9,17 +9,14 @@ from database import init_db, mongo
 import requests
 from zoom_api import get_zoom_access_token
 
-from flask import request
-
-
-# Load .env file
+# Load environment variables
 load_dotenv()
 
 # Create Flask app
 app = Flask(__name__)
 
-# Configure MongoDB
-app.config["MONGO_URI"] = "mongodb+srv://vimalanarunpragash2000_db_user:MyMongo123@cluster0.p7avgza.mongodb.net/zoomproject?retryWrites=true&w=majority&appName=Cluster0"
+# Configure MongoDB from Railway Environment Variables
+app.config["MONGO_URI"] = os.getenv("MONGO_URI")
 
 init_db(app)
 
@@ -40,7 +37,7 @@ def get_data():
     data = list(mongo.db.students.find({}, {"_id": 0}))
     return jsonify(data)
 
-# ✅ Create Zoom Meeting route
+# Create Zoom Meeting route
 @app.route('/create_meeting')
 def create_meeting():
     access_token = get_zoom_access_token()
@@ -63,7 +60,7 @@ def create_meeting():
 
     response = requests.post(url, headers=headers, json=data)
     result = response.json()
-   
+
     # Save meeting info in MongoDB
     mongo.db.meetings.insert_one(result)
 
@@ -79,12 +76,11 @@ def zoom_webhook():
     data = request.get_json(force=True)
     print("📩 Incoming Zoom Event:", data)
 
-    # ✅ Handle URL validation (for Server-to-Server OAuth)
+    # URL validation for Server-to-Server OAuth
     if data and data.get("event") == "endpoint.url_validation":
         plain_token = data["payload"]["plainToken"]
         client_secret = os.getenv("ZOOM_CLIENT_SECRET", "")
 
-        # Compute encrypted token using client secret
         hash_for_validate = hmac.new(
             client_secret.encode('utf-8'),
             plain_token.encode('utf-8'),
@@ -92,13 +88,12 @@ def zoom_webhook():
         ).digest()
         encoded_hash = base64.b64encode(hash_for_validate).decode('utf-8')
 
-        print("🔐 URL validation requested by Zoom — sending response")
         return jsonify({
             "plainToken": plain_token,
             "encryptedToken": encoded_hash
         }), 200
 
-    # ✅ Handle normal Zoom events
+    # Normal Zoom events
     event_type = data.get("event")
     if event_type == "meeting.participant_joined":
         participant = data["payload"]["object"]["participant"]["user_name"]
@@ -111,8 +106,7 @@ def zoom_webhook():
 
     return jsonify({"status": "ok"}), 200
 
-
-
+# Main entry
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)
